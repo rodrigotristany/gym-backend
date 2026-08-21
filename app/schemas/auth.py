@@ -1,9 +1,18 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
+
+
+def _normalize_email(value: str) -> str:
+    return value.strip().lower()
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return _normalize_email(v)
 
 
 class TokenResponse(BaseModel):
@@ -23,18 +32,28 @@ class MessageResponse(BaseModel):
 class PasswordRecoveryRequest(BaseModel):
     email: EmailStr
 
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return _normalize_email(v)
+
 
 class PasswordRecoveryConfirm(BaseModel):
     email: EmailStr
     otp_code: str
     new_password: str
 
-
-class OtpVerifyRequest(BaseModel):
-    email: EmailStr
-    otp_code: str
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return _normalize_email(v)
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return _normalize_email(v)
