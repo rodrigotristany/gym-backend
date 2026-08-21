@@ -33,3 +33,8 @@ class PasswordRecoveryConfirm(BaseModel):
 class OtpVerifyRequest(BaseModel):
     email: EmailStr
     otp_code: str
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
