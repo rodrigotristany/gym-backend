@@ -81,7 +81,9 @@ Out of scope for this pass: Exercise, Routine, Subroutine, Category, favorites, 
 Full flow, mirrored for both account types, per the skill's standard pattern — no half-finished auth:
 
 - **Admin** (`/admin/auth/*`): login, logout, OTP verify, password recovery
-- **User** (`/auth/*`): login, logout, OTP verify, password recovery
+- **User** (`/auth/*`): register, login, logout, OTP verify, password recovery
+
+Registration (`POST /auth/register`) exists only for `users` — end clients self-register from the mobile app, email + password with strength rules enforced, per CLIENT.md ("Account must be created"). `admin_users` have no self-registration endpoint in this pass; staff accounts are provisioned directly (DB insert/seed) until an admin-management flow is built.
 
 Mechanism:
 - JWT access token, short-lived (`ACCESS_TOKEN_EXPIRE_MINUTES`, default 30)
