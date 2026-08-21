@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -15,7 +16,7 @@ def create_access_token(subject: str, extra: dict | None = None) -> str:
 
 def create_refresh_token(subject: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": subject, "exp": expire, "type": "refresh"}
+    payload = {"sub": subject, "exp": expire, "type": "refresh", "jti": secrets.token_hex(16)}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
