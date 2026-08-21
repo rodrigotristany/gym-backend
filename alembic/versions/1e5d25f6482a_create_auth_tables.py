@@ -75,3 +75,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_admin_users_email'), table_name='admin_users')
     op.drop_table('admin_users')
     # ### end Alembic commands ###
+    # op.create_table() above implicitly CREATE TYPE'd the admin_role enum but
+    # DROP TABLE does not remove it; drop it explicitly so downgrade -> upgrade
+    # doesn't fail with "type admin_role already exists".
+    sa.Enum(name='admin_role').drop(op.get_bind(), checkfirst=True)
