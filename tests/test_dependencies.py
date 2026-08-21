@@ -7,7 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.dependencies import get_current_admin, get_current_user
 from app.models.admin_user import AdminRole, AdminUser
 from app.models.user import User
-from app.utils.jwt import create_access_token
+from app.utils.jwt import create_access_token, create_refresh_token
 
 
 def _bearer(token: str) -> HTTPAuthorizationCredentials:
@@ -50,4 +50,26 @@ async def test_get_current_user_returns_user_for_valid_token(db_session):
 async def test_get_current_user_rejects_invalid_token(db_session):
     with pytest.raises(HTTPException) as exc_info:
         await get_current_user(credentials=_bearer("not-a-valid-token"), db=db_session)
+    assert exc_info.value.status_code == 401
+
+
+async def test_get_current_admin_rejects_refresh_token(db_session):
+    admin = AdminUser(email=f"a-{uuid.uuid4()}@example.com", hashed_password="x", role=AdminRole.admin)
+    db_session.add(admin)
+    await db_session.flush()
+    refresh_token = create_refresh_token(subject=str(admin.id))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_admin(credentials=_bearer(refresh_token), db=db_session)
+    assert exc_info.value.status_code == 401
+
+
+async def test_get_current_user_rejects_refresh_token(db_session):
+    user = User(email=f"u-{uuid.uuid4()}@example.com", hashed_password="x")
+    db_session.add(user)
+    await db_session.flush()
+    refresh_token = create_refresh_token(subject=str(user.id))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(credentials=_bearer(refresh_token), db=db_session)
     assert exc_info.value.status_code == 401

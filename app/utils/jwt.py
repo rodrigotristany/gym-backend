@@ -10,7 +10,7 @@ ALGORITHM = "HS256"
 
 def create_access_token(subject: str, extra: dict | None = None) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": subject, "exp": expire, **(extra or {})}
+    payload = {"sub": subject, "exp": expire, **(extra or {}), "type": "access"}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
