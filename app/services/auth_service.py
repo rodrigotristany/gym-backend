@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -78,9 +78,23 @@ async def refresh_access_token(db: AsyncSession, refresh_token: str) -> dict:
     return await issue_tokens(db, stored.user_type, stored.user_id)
 
 
-async def revoke_refresh_token(db: AsyncSession, refresh_token: str) -> None:
+async def revoke_refresh_token(
+    db: AsyncSession, user_type: UserType, principal_id: uuid.UUID, refresh_token: str
+) -> None:
+    """Revoke a refresh token belonging to the given principal.
+
+    The lookup is scoped to ``(user_id, user_type)`` so an authenticated caller
+    can only revoke their own sessions. A token that exists but belongs to
+    somebody else is a silent no-op, so the caller can't probe for it.
+    """
     token_hash = sha256_hex(refresh_token)
-    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    result = await db.execute(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.user_id == principal_id,
+            RefreshToken.user_type == user_type,
+        )
+    )
     stored = result.scalar_one_or_none()
     if stored is not None:
         stored.revoked = True
@@ -88,6 +102,19 @@ async def revoke_refresh_token(db: AsyncSession, refresh_token: str) -> None:
 
 
 async def create_otp(db: AsyncSession, user_type: UserType, principal_id: uuid.UUID, purpose: str) -> str:
+    # Invalidate any still-unused codes for the same purpose so only the newest
+    # code is ever valid — otherwise repeated requests multiply guessing odds.
+    await db.execute(
+        update(OtpCode)
+        .where(
+            OtpCode.user_id == principal_id,
+            OtpCode.user_type == user_type,
+            OtpCode.purpose == purpose,
+            OtpCode.used.is_(False),
+        )
+        .values(used=True)
+    )
+
     code = generate_otp_code()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRE_MINUTES)
     db.add(
@@ -171,4 +198,16 @@ async def confirm_password_recovery(
     await verify_otp(db, user_type, principal.id, "password_recovery", otp_code)
 
     principal.hashed_password = hash_password(new_password)
+
+    # A password reset is account-compromise remediation: kill every existing
+    # session so a stolen refresh token can't outlive the reset.
+    await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == principal.id,
+            RefreshToken.user_type == user_type,
+            RefreshToken.revoked.is_(False),
+        )
+        .values(revoked=True)
+    )
     await db.flush()

@@ -67,16 +67,57 @@ async def test_revoke_refresh_token_prevents_reuse(db_session):
     user = await _make_user(db_session)
     tokens = await auth_service.issue_tokens(db_session, "user", user.id)
 
-    await auth_service.revoke_refresh_token(db_session, tokens["refresh_token"])
+    await auth_service.revoke_refresh_token(db_session, "user", user.id, tokens["refresh_token"])
 
     with pytest.raises(auth_service.AuthError):
         await auth_service.refresh_access_token(db_session, tokens["refresh_token"])
+
+
+async def test_revoke_refresh_token_ignores_another_principals_token(db_session):
+    owner = await _make_user(db_session)
+    other = await _make_user(db_session)
+    tokens = await auth_service.issue_tokens(db_session, "user", owner.id)
+
+    # Silent no-op: the token isn't the caller's, so it must stay usable.
+    await auth_service.revoke_refresh_token(db_session, "user", other.id, tokens["refresh_token"])
+
+    refreshed = await auth_service.refresh_access_token(db_session, tokens["refresh_token"])
+    assert "access_token" in refreshed
+
+
+async def test_revoke_refresh_token_ignores_wrong_user_type(db_session):
+    user = await _make_user(db_session)
+    tokens = await auth_service.issue_tokens(db_session, "user", user.id)
+
+    await auth_service.revoke_refresh_token(db_session, "admin", user.id, tokens["refresh_token"])
+
+    refreshed = await auth_service.refresh_access_token(db_session, tokens["refresh_token"])
+    assert "access_token" in refreshed
 
 
 async def test_create_and_verify_otp_roundtrip(db_session):
     user = await _make_user(db_session)
     code = await auth_service.create_otp(db_session, "user", user.id, "login_otp")
     await auth_service.verify_otp(db_session, "user", user.id, "login_otp", code)
+
+
+async def test_create_otp_invalidates_previous_unused_codes(db_session):
+    user = await _make_user(db_session)
+    first = await auth_service.create_otp(db_session, "user", user.id, "login_otp")
+    second = await auth_service.create_otp(db_session, "user", user.id, "login_otp")
+
+    with pytest.raises(auth_service.AuthError):
+        await auth_service.verify_otp(db_session, "user", user.id, "login_otp", first)
+
+    await auth_service.verify_otp(db_session, "user", user.id, "login_otp", second)
+
+
+async def test_create_otp_does_not_invalidate_other_purposes(db_session):
+    user = await _make_user(db_session)
+    recovery_code = await auth_service.create_otp(db_session, "user", user.id, "password_recovery")
+    await auth_service.create_otp(db_session, "user", user.id, "login_otp")
+
+    await auth_service.verify_otp(db_session, "user", user.id, "password_recovery", recovery_code)
 
 
 async def test_verify_otp_rejects_wrong_code(db_session):
@@ -139,6 +180,24 @@ async def test_confirm_password_recovery_updates_password(db_session, caplog):
 
     refreshed = await db_session.get(User, user.id)
     assert verify_password("N3w!Passw0rd", refreshed.hashed_password) is True
+
+
+async def test_confirm_password_recovery_revokes_existing_refresh_tokens(db_session, caplog):
+    user = await _make_user(db_session, password="Str0ng!Pass")
+    tokens = await auth_service.issue_tokens(db_session, "user", user.id)
+
+    with caplog.at_level(logging.INFO, logger="app.email"):
+        await auth_service.request_password_recovery(db_session, "user", user.email)
+    code = re.search(r"code=(\d{6})", caplog.text).group(1)
+
+    await auth_service.confirm_password_recovery(
+        db_session, "user", user.email, code, "N3w!Passw0rd", enforce_strength=True
+    )
+
+    result = await db_session.execute(select(RefreshToken).where(RefreshToken.user_id == user.id))
+    assert all(row.revoked for row in result.scalars().all())
+    with pytest.raises(auth_service.AuthError):
+        await auth_service.refresh_access_token(db_session, tokens["refresh_token"])
 
 
 async def test_confirm_password_recovery_enforces_strength_before_consuming_otp(db_session, caplog):
