@@ -1096,7 +1096,7 @@ git commit -m "feat: add get_current_admin and get_current_user auth dependencie
 
 **Interfaces:**
 - Consumes: `AdminUser`, `User`, `RefreshToken`, `OtpCode` (Task 4); `hash_password`, `verify_password`, `validate_password_strength`, `create_access_token`, `create_refresh_token`, `decode_token`, `generate_otp_code`, `hash_otp_code`, `sha256_hex`, `send_otp_email` (Task 5).
-- Produces: `AuthError(status_code, detail)` exception; `authenticate`, `issue_tokens`, `refresh_access_token`, `revoke_refresh_token`, `create_otp`, `verify_otp`, `register`, `request_password_recovery`, `confirm_password_recovery` — all `async`, taking `db: AsyncSession` first. Consumed by `admin_auth.py`/`user_auth.py` routers (Tasks 8-9), which convert `AuthError`/`ValueError` into `HTTPException`.
+- Produces: `AuthError(status_code, detail)` exception; `authenticate`, `issue_tokens`, `refresh_access_token`, `revoke_refresh_token`, `create_otp`, `verify_otp`, `register`, `request_password_recovery`, `confirm_password_recovery`, `get_principal_by_email` — all `async`, taking `db: AsyncSession` first. Consumed by `admin_auth.py`/`user_auth.py` routers (Tasks 8-9), which convert `AuthError`/`ValueError` into `HTTPException`. `get_principal_by_email` exists so routers never issue a raw `select()` themselves (Global Constraints: DB calls live in services, not routers) — the `otp/verify` endpoints need to resolve an email to a principal before calling `verify_otp`, which takes an id.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1216,6 +1216,17 @@ async def test_register_rejects_duplicate_email(db_session):
     with pytest.raises(auth_service.AuthError) as exc_info:
         await auth_service.register(db_session, user.email, "Str0ng!Pass")
     assert exc_info.value.status_code == 409
+
+
+async def test_get_principal_by_email_returns_none_for_unknown_email(db_session):
+    result = await auth_service.get_principal_by_email(db_session, "user", "nobody@example.com")
+    assert result is None
+
+
+async def test_get_principal_by_email_returns_the_matching_principal(db_session):
+    user = await _make_user(db_session)
+    result = await auth_service.get_principal_by_email(db_session, "user", user.email)
+    assert result.id == user.id
 
 
 async def test_request_password_recovery_is_silent_for_unknown_email(db_session):
@@ -1414,6 +1425,12 @@ async def register(db: AsyncSession, email: str, password: str) -> User:
     db.add(user)
     await db.flush()
     return user
+
+
+async def get_principal_by_email(db: AsyncSession, user_type: UserType, email: str):
+    model = MODELS_BY_TYPE[user_type]
+    result = await db.execute(select(model).where(model.email == email))
+    return result.scalar_one_or_none()
 
 
 async def request_password_recovery(db: AsyncSession, user_type: UserType, email: str) -> None:
@@ -1671,7 +1688,6 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'app.routers.admin_aut
 `app/routers/admin_auth.py`:
 ```python
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_admin, get_db
@@ -1730,8 +1746,7 @@ async def password_recovery_confirm(body: PasswordRecoveryConfirm, db: AsyncSess
 
 @router.post("/otp/verify", response_model=TokenResponse)
 async def otp_verify(body: OtpVerifyRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(AdminUser).where(AdminUser.email == body.email))
-    admin = result.scalar_one_or_none()
+    admin = await auth_service.get_principal_by_email(db, USER_TYPE, body.email)
     if admin is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     try:
@@ -1941,7 +1956,6 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'app.routers.user_auth
 `app/routers/user_auth.py`:
 ```python
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db
@@ -2014,8 +2028,7 @@ async def password_recovery_confirm(body: PasswordRecoveryConfirm, db: AsyncSess
 
 @router.post("/otp/verify", response_model=TokenResponse)
 async def otp_verify(body: OtpVerifyRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
-    user = result.scalar_one_or_none()
+    user = await auth_service.get_principal_by_email(db, USER_TYPE, body.email)
     if user is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     try:
