@@ -761,7 +761,7 @@ def test_hash_and_verify_password_roundtrip():
 
 @pytest.mark.parametrize(
     "password",
-    ["short1!", "nouppercase1!", "NOLOWERCASE1!", "NoDigitsHere!", "NoSymbols1here"],
+    ["Str0ng!", "nouppercase1!", "NOLOWERCASE1!", "NoDigitsHere!", "NoSymbols1here"],
 )
 def test_validate_password_strength_rejects_weak_passwords(password):
     with pytest.raises(ValueError):
