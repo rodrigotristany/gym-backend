@@ -3,7 +3,6 @@ import re
 import uuid
 
 from app.models.admin_user import AdminRole, AdminUser
-from app.services import auth_service
 from app.utils.password import hash_password
 
 
@@ -36,6 +35,26 @@ async def test_login_rejects_wrong_password(client, db_session):
     response = await client.post("/admin/auth/login", json={"email": admin.email, "password": "wrong"})
 
     assert response.status_code == 401
+
+
+async def test_login_with_over_length_password_returns_401_not_500(client, db_session):
+    admin = await _make_admin(db_session, password="Str0ng!Pass")
+
+    response = await client.post(
+        "/admin/auth/login", json={"email": admin.email, "password": "x" * 120}
+    )
+
+    assert response.status_code == 401
+
+
+async def test_login_accepts_email_in_a_different_case(client, db_session):
+    admin = await _make_admin(db_session, password="Str0ng!Pass")
+
+    response = await client.post(
+        "/admin/auth/login", json={"email": admin.email.upper(), "password": "Str0ng!Pass"}
+    )
+
+    assert response.status_code == 200
 
 
 async def test_login_rejects_disabled_account(client, db_session):
@@ -91,18 +110,25 @@ async def test_password_recovery_flow(client, db_session, caplog):
     assert confirm_response.status_code == 200
 
 
+async def test_password_recovery_confirm_rejects_over_length_password_with_400(client, db_session, caplog):
+    admin = await _make_admin(db_session, password="Str0ng!Pass")
+
+    with caplog.at_level(logging.INFO, logger="app.email"):
+        await client.post("/admin/auth/password-recovery/request", json={"email": admin.email})
+    code = re.search(r"code=(\d{6})", caplog.text).group(1)
+
+    # Admins skip strength enforcement, so bcrypt's ValueError is the only guard
+    # here — it must surface as a clean 400, not an unhandled 500.
+    response = await client.post(
+        "/admin/auth/password-recovery/confirm",
+        json={"email": admin.email, "otp_code": code, "new_password": "x" * 100},
+    )
+
+    assert response.status_code == 400
+
+
 async def test_password_recovery_request_is_silent_for_unknown_email(client):
     response = await client.post(
         "/admin/auth/password-recovery/request", json={"email": "nobody@example.com"}
     )
     assert response.status_code == 200
-
-
-async def test_otp_verify_returns_tokens(client, db_session):
-    admin = await _make_admin(db_session)
-    code = await auth_service.create_otp(db_session, "admin", admin.id, "login_otp")
-
-    response = await client.post("/admin/auth/otp/verify", json={"email": admin.email, "otp_code": code})
-
-    assert response.status_code == 200
-    assert "access_token" in response.json()

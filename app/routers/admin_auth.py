@@ -6,7 +6,6 @@ from app.models.admin_user import AdminUser
 from app.schemas.auth import (
     LoginRequest,
     MessageResponse,
-    OtpVerifyRequest,
     PasswordRecoveryConfirm,
     PasswordRecoveryRequest,
     RefreshTokenRequest,
@@ -32,9 +31,9 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 async def logout(
     body: RefreshTokenRequest,
     db: AsyncSession = Depends(get_db),
-    _: AdminUser = Depends(get_current_admin),
+    current_admin: AdminUser = Depends(get_current_admin),
 ):
-    await auth_service.revoke_refresh_token(db, body.refresh_token)
+    await auth_service.revoke_refresh_token(db, USER_TYPE, current_admin.id, body.refresh_token)
     return MessageResponse(message="logged out")
 
 
@@ -52,16 +51,6 @@ async def password_recovery_confirm(body: PasswordRecoveryConfirm, db: AsyncSess
         )
     except auth_service.AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return MessageResponse(message="password updated")
-
-
-@router.post("/otp/verify", response_model=TokenResponse)
-async def otp_verify(body: OtpVerifyRequest, db: AsyncSession = Depends(get_db)):
-    admin = await auth_service.get_principal_by_email(db, USER_TYPE, body.email)
-    if admin is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-    try:
-        await auth_service.verify_otp(db, USER_TYPE, admin.id, "login_otp", body.otp_code)
-    except auth_service.AuthError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    return await auth_service.issue_tokens(db, USER_TYPE, admin.id)

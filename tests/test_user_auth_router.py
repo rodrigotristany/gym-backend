@@ -3,7 +3,6 @@ import re
 import uuid
 
 from app.models.user import User
-from app.services import auth_service
 from app.utils.password import hash_password
 
 
@@ -45,6 +44,51 @@ async def test_register_rejects_duplicate_email(client, db_session):
     )
 
     assert response.status_code == 409
+
+
+async def test_register_rejects_duplicate_email_differing_only_in_case(client, db_session):
+    user = await _make_user(db_session)
+
+    response = await client.post(
+        "/auth/register", json={"email": user.email.upper(), "password": "Str0ng!Pass"}
+    )
+
+    assert response.status_code == 409
+
+
+async def test_register_normalizes_email_case_and_whitespace(client):
+    local = f"new-{uuid.uuid4()}"
+
+    response = await client.post(
+        "/auth/register",
+        json={"email": f"  {local.upper()}@EXAMPLE.COM  ", "password": "Str0ng!Pass"},
+    )
+    assert response.status_code == 201
+
+    # The stored address is the normalized one, so the lowercase form logs in.
+    login = await client.post(
+        "/auth/login", json={"email": f"{local}@example.com", "password": "Str0ng!Pass"}
+    )
+    assert login.status_code == 200
+
+
+async def test_register_rejects_over_length_password(client):
+    response = await client.post(
+        "/auth/register",
+        json={"email": f"new-{uuid.uuid4()}@example.com", "password": "A1!" + "a" * 100},
+    )
+
+    assert response.status_code == 400
+
+
+async def test_login_with_over_length_password_returns_401_not_500(client, db_session):
+    user = await _make_user(db_session, password="Str0ng!Pass")
+
+    response = await client.post(
+        "/auth/login", json={"email": user.email, "password": "x" * 120}
+    )
+
+    assert response.status_code == 401
 
 
 async def test_login_returns_tokens_for_valid_credentials(client, db_session):
@@ -98,15 +142,6 @@ async def test_password_recovery_flow_enforces_strength(client, db_session, capl
         json={"email": user.email, "otp_code": code, "new_password": "N3w!Passw0rd"},
     )
     assert strong_response.status_code == 200
-
-
-async def test_otp_verify_returns_tokens(client, db_session):
-    user = await _make_user(db_session)
-    code = await auth_service.create_otp(db_session, "user", user.id, "login_otp")
-
-    response = await client.post("/auth/otp/verify", json={"email": user.email, "otp_code": code})
-
-    assert response.status_code == 200
 
 
 async def test_token_refresh_rotates_tokens(client, db_session):

@@ -21,3 +21,24 @@ def test_validate_password_strength_rejects_weak_passwords(password):
 
 def test_validate_password_strength_accepts_strong_password():
     validate_password_strength("Str0ng!Pass")
+
+
+def test_validate_password_strength_rejects_over_72_bytes():
+    # Otherwise valid, but bcrypt would raise ValueError on it.
+    password = "A1!" + "a" * 70
+    assert len(password.encode()) > 72
+    with pytest.raises(ValueError, match="72 bytes"):
+        validate_password_strength(password)
+
+
+def test_validate_password_strength_counts_bytes_not_characters():
+    # 40 multi-byte characters = 120 bytes, but only 43 characters.
+    password = "A1!" + "é" * 40
+    assert len(password) <= 72
+    with pytest.raises(ValueError, match="72 bytes"):
+        validate_password_strength(password)
+
+
+def test_verify_password_returns_false_for_over_length_input():
+    hashed = hash_password("Str0ng!Pass")
+    assert verify_password("x" * 100, hashed) is False
