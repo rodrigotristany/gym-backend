@@ -1641,7 +1641,7 @@ async def test_logout_revokes_refresh_token(client, db_session):
 
 async def test_logout_requires_authentication(client):
     response = await client.post("/admin/auth/logout", json={"refresh_token": "x"})
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 async def test_password_recovery_flow(client, db_session, caplog):
