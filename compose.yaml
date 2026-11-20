@@ -1,0 +1,7 @@
+﻿services:
+  gymbackend:
+    image: gymbackend
+    build:
+      context: .
+      dockerfile: GymBackend/Dockerfile
+
